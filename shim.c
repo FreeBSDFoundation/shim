@@ -1560,6 +1560,60 @@ static EFI_STATUS shim_read_header(void *data, unsigned int datasize,
 	return status;
 }
 
+static EFI_STATUS shim_execute(EFI_HANDLE *image_handle, void *data, unsigned int datasize)
+{
+	EFI_GUID loaded_image_protocol = LOADED_IMAGE_PROTOCOL;
+	EFI_LOADED_IMAGE *li, li_bak;
+	EFI_STATUS efi_status;
+
+	in_protocol = 1;
+
+	/*
+	 * We need to refer to the loaded image protocol on the running
+	 * binary in order to find our path
+	 */
+	efi_status = uefi_call_wrapper(BS->HandleProtocol, 3, image_handle,
+				       &loaded_image_protocol, (void **)&li);
+
+	if (efi_status != EFI_SUCCESS) {
+		perror(L"Unable to init protocol\n");
+		return efi_status;
+	}
+
+	/*
+	 * We need to modify the loaded image protocol entry before running
+	 * the new binary, so back it up
+	 */
+	CopyMem(&li_bak, li, sizeof(li_bak));
+
+	/*
+	 * Verify and, if appropriate, relocate and execute the executable
+	 */
+	efi_status = handle_image(data, datasize, li);
+
+	if (efi_status != EFI_SUCCESS) {
+		perror(L"Failed to load image: %r\n", efi_status);
+		CopyMem(li, &li_bak, sizeof(li_bak));
+		return efi_status;
+	}
+
+	loader_is_participating = 0;
+
+	/*
+	 * The binary is trusted and relocated. Run it
+	 */
+	efi_status = uefi_call_wrapper(entry_point, 2, image_handle, systab);
+
+	/*
+	 * Restore our original loaded image values
+	 */
+	CopyMem(li, &li_bak, sizeof(li_bak));
+
+	in_protocol = 0;
+
+	return efi_status;
+}
+
 /*
  * Load and run an EFI executable
  */
@@ -2037,6 +2091,7 @@ EFI_STATUS efi_main (EFI_HANDLE image_handle, EFI_SYSTEM_TABLE *passed_systab)
 	shim_lock_interface.Verify = shim_verify;
 	shim_lock_interface.Hash = shim_hash;
 	shim_lock_interface.Context = shim_read_header;
+	shim_lock_interface.Execute = shim_execute;
 
 	systab = passed_systab;
 
