@@ -1,3 +1,6 @@
+ifeq ($(ARCH),amd64)
+	override ARCH	= x86_64
+endif
 
 EFI_INCLUDES	= -I../Include -I$(EFI_INCLUDE) -I$(EFI_INCLUDE)/$(ARCH) -I$(EFI_INCLUDE)/protocol
 
